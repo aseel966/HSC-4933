@@ -1,98 +1,117 @@
-#############################################
-# function_practice_1.py # aseelali18@usf.edu
-#############################################
-# (c) Aseel,Ali 2026 #HSC4933 #Week 2, Wed #
-# A practice script missing a function to  #
-# calculate BMI from input                 #
-############################################
+###########################################
+# Lab 8 - Logistic and Poisson Regression #
+# Aseel Ali - HSC 4933 - 10/25/2026       #
+###########################################
 
-# First, lets make a variable called height_m that is a floating-point number
-# and let it be assigned a value according to a user input:
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+from sklearn.metrics import classification_report, confusion_matrix
+from statsmodels.stats.outliers_influence import variance_inflation_factor
 
-height_m = float(input("Please enter your height in metres: "))
+# Ask the user for a dataset and load it
+filename = input("Enter the dataset file name: ")
+df = pd.read_csv(filename)
 
-# Now, lets define another floating-point variables called weight_kg that is
-# a;so assigned a value according to user input:
+# Clean column names using IC#4 method
+df.columns = df.columns.str.lower().str.replace(" ", "_")
 
-weight_kg = float(input("Please enter your weight in kg: "))
+# List all available columns
+print("\nAvailable columns:")
+print(df.columns.tolist())
 
-# Now, in the space below this line bt before line 25, lets make a function to
-# calculate bmi according to the formula BMI = weight_kg / (height in m)^2 and
-# return the result as a floating number:
+# Ask for multiple predictors and one response variable
+predictors = input("Enter predictors columns separated by commas: ")
+predictors = predictors.replace(" ", "").lower().split(",")
 
-def calculate_bmi (height_m ,  weight_kg):
-    """
-    Calculates the BMI based on the height and weight in metres
+response = input("Enter the response column: ")
+response = response.strip().lower()
 
-    :param height_m: Height in metres
-    :param weight_kg: Weight in kg
-    :return: BMI
-    """
-    BMI=(weight_kg/height_m **2)
-    return BMI
+# Ask the user which regression to perform
+print("\n1. Logistic Regression:")
+print("2. Poisson Regression")
+choice = input("Enter 1 or 2: ")
 
-def categorize_bmi(bmi):
-    """
-    Calculates the BMI based on the height and weight in metres
+# Remove rows missing values when in selected columns
+df = df.dropna(subset=predictors + [response])
 
-    :param bmi:
-    :return:
-    """
-    if bmi < 18.5:
-        return "Underweight"
-    elif bmi <25:
-        return "Normal"
-    elif bmi <30:
-        return "Overweight"
-    elif bmi <=30:
-        return "Obese"
-    else:
-        return "ERROR"
+# Select predictors and response
+X = df[predictors]
+x = X.apply(pd.to_numeric, errors="coerce")
+y = df[response]
+y = pd.to_numeric(y, errors="coerce")
 
-# With our function written, now we can call it and set the BMI value equal to the output:
+valid_rows = X.notna().all(axis=1) & y.notna()
+X = X.loc[valid_rows]
+y = y.loc[valid_rows]
+# Add a constant for regression
+X = sm.add_constant(X)
 
-BMI=calculate_bmi(height_m,weight_kg)
-category = categorize_bmi(BMI)
+# Logistic regression
+if choice == "1":
 
-# Now that we have a variable called BMI, lets print out the BMI calculation statement
-# with the value rounded to 2 decimal places:
-print(f"Your BMI is {BMI:.2f}")
-print(f"Your category is {category}")
+    # Logistic regression requires values of 0 and 1
+    if not y.isin([0, 1]).all():
+        raise ValueError("Response must contain only 0 and 1.")
 
+    model = sm.Logit(y, X).fit()
 
+    # Predict values of 0 or 1
+    prediction = model.predict(X)
+    predictions = (prediction > 0.5).astype(int)
 
+    # Calculate accuracy
+    accuracy = (predictions == y).mean()
 
+    # Create regression output
+    output = str(model.summary())
+    output += "\n\nAccuracy: " + str(accuracy)
+    output += "\n\nClassification Report:\n"
+    output += classification_report(y, predictions)
+    output += "\nConfusion Matrix:\n"
+    output += str(confusion_matrix(y, predictions))
 
+# Poisson regression
+elif choice == "2":
 
+    # Poisson regression is intended for count variables
+    if (y < 0).any():
+        raise ValueError("Response must not contain negative values.")
+    if (y % 1 != 0).any():
+        print("Warning: The response contains decimals, not counts")
 
+     # Calculate Poisson regression
+    model = sm.GLM(y, X, family=sm.families.Poisson()).fit()
 
+     # Calculate VIF for each predictor
+    vif = pd.DataFrame()
+    vif["Predictor"] = predictors
+    vif["VIF"] = [
+     variance_inflation_factor(X.values, i + 1)
+     for i in range(len(predictors))
+     ]
 
+     # Calculate pseudo-R squared
+    null_model = sm.GLM(
+        y, X[["const"]], family=sm.families.Poisson()).fit()
+    pseudo_r2 = 1 - model.llf / null_model.llf
 
+    # Create regression output
+    output = str(model.summary())
+    output += "\n\nPseudo-R²: " + str(pseudo_r2)
+    output += "\n\nVIF Results:\n"
+    output += vif.to_string(index=False)
 
+# Print the regression results
+print("\n", output)
 
+# Ask whether to save results
+save = input("\nWould you like to save the result? (yes/no): ")
 
+if save.lower() == "yes":
+    output_name = input("Enter a filename ending in .txt: ")
 
+    with open(output_name, "w") as file:
+        file.write(output)
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    print("Output saved as:", output_name)
