@@ -1,74 +1,159 @@
-heart_rate_samples = {
-    "J.Alvarze": [72,75,78],
-    "M. Chen": [80,82],
-    "R. Okafor": [65, 68, 70, 66],
-    "S. Patel": [90,95,92,88,91],
-    "T. Nguyen": [77,79],
-    "L. Kowalski": [68,70,69],
-    "D. Osei": [98,101,95,99],
-    "A. Whitfield": [74,76,75,73],
-}
+#########################################################
+# Kaplan Meier Log rate and Cox PH tests                #
+# ----------------------------------------------------- #
+# Aseel S Ali # HSC4933.005 # 11/1/26                   #
+# This script uses two heart failure dataset to perform #
+# a Keplan Meier log rate test and a Cox proportional   #
+# hazards regression. It compares hospital readmission  #
+# between treatment groups and examines factors related #
+#########################################################
 
-def get_patient(*args):
-    patient_number = args[0]
-    patients = list(heart_rate_samples.keys())
+import pandas as pd
+import matplotlib.pyplot as plt
+from lifelines import KaplanMeierFitter, CoxPHFitter
+from lifelines.statistics import logrank_test
 
-    if 1 <= patient_number <= len(patients):
-        return patients[patient_number-1]
-    else:
-        return None
+# Part 1: Kaplan-meter log-rate test
 
-def get_all_stats(*args):
-    patient = args[0]
+# Load the log-rank dataset
+km_data = pd.read_csv("km_logrank_readmission.csv")
 
-    if patient in heart_rate_samples:
-        print("Patient:", patient)
-        print("Heart rate samples:", heart_rate_samples[patient])
-    else:
-        print("Patient not found,")
+# Display the columns and data types
+print("Log-Rank Dataset:")
+print(km_data.head())
+print(km_data.dtypes)
 
-def get_specific_stat(*args):
-    patient = args[0]
-    stat_number = args[1]
+# Remove rows with missing required values
+km_data = km_data.dropna(
+    subset=["treatment_group", "time_days", "readmitted", "sex"]
+)
+# Clean treatment group names
+km_data["treatment_group"] = km_data["treatment_group"].str.strip()
 
-    if patient in heart_rate_samples:
-        stats = heart_rate_samples[patient]
+# Separate the two treatment groups
+standard = km_data[
+    km_data["treatment_group"].str.contains("Standard", case=False, na=False)
+]
+telehealth =km_data[
+    km_data["treatment_group"].str.contains("TeleHealth", case=False, na=False)
+]
 
-        if 1 <= stat_number <= len(stats):
-            print("Patient:", patient)
-            print("Heart rate:", stats[stat_number - 1])
-        else:
-            print("Stat not found.")
-    else:
-        print("Patient not found,")
+# Check group sizes
+print("\nStandard care patients:", len(standard))
+print("\nTelehealth patients:", len(telehealth))
 
-print ("Patient Heart Rate System")
-print ("-------------------------")
+# Perform the log-rate test
+logrank_results = logrank_test(
+    standard["time_days"],
+    telehealth["time_days"],
+    event_observed_A=standard["readmitted"],
+    event_observed_B=telehealth["readmitted"],
+)
+print("\nLog-Rank Test: Treatment Groups")
+print(logrank_results.summary)
 
-print("Patient numbers:")
-for number, patient in enumerate(heart_rate_samples.keys(), start=1):
-    print(number, "-", patient)
+# Perform another log-rank tests comparing sex
+male = km_data[km_data["sex"] =="Male"]
+female = km_data[km_data["sex"] =="Female"]
+sex_results = logrank_test(
+    male["time_days"],
+    female["time_days"],
+    event_observed_A=male["readmitted"],
+    event_observed_B=female["readmitted"],
+)
+print("\nLog-Rank Test: Male vs Female")
+print(sex_results.summary)
 
-patient_number = int(input("Enter patient number: "))
+# Create the Kaplan-Meier figure
+kmf = KaplanMeierFitter()
+plt.figure(figsize=(9,6))
+kmf.fit(
+    standard["time_days"],
+    event_observed=standard["readmitted"],
+    label="standard care",
+)
+kmf.plot_survival_function(ci_show=True)
+kmf.fit(
+    telehealth["time_days"],
+    event_observed=telehealth["readmitted"],
+    label="telehealth follow-up",
+)
+kmf.plot_survival_function(ci_show=True)
 
-patient = get_patient(patient_number)
+plt.title("Kaplan Meier: time to hospital readmission")
+plt.xlabel("Time after discharge (days)")
+plt.ylabel("Probability of no Readmission")
+plt.xlim(0,180)
+plt.ylim(0,1)
+plt.grid(True)
+plt.tight_layout()
 
-if patient is None:
-    print("Patient not found,")
-else:
-    print("1. Retrieve all patient stats")
-    print("2. Retrieve specific patient stats")
+# Save and display the figure
+plt.savefig("kaplan_meier_logrank.png", dpi=300)
+plt.show()
 
-    choice = int(input("Enter your choice: "))
+# Part 2: Cox Proportional Hazards Regression
 
-    if choice == 1:
-        get_all_stats(patient)
+# Load the cox proportional hazards dataset
+cox_data = pd.read_csv("cox_ph_heart_failure_survival.csv")
 
-    elif choice == 2:
-        print("Available heart rates samples:", heart_rate_samples[patient])
-        stat_number = int(input("Enter the stat number you want: "))
-        get_specific_stat( patient, stat_number )
+# Display the columns and dataset
+print("\nCox Proportional Hazard Dataset:")
+print(cox_data.head())
+print(cox_data.dtypes)
 
-    else:
-        print("invalid choice,")
+# Convert sex into a numeric variable
+# Male = 1 and Female = 0
+cox_data["sex"] = cox_data["sex"].map({
+    "Male": 1,
+    "Female": 0
+})
 
+# Select the required variables
+cox_columns = [
+    "time_months",
+    "death",
+    "age",
+    "sex",
+    "bmi",
+    "systolic_bp",
+    "ejection_fraction",
+    "diabetes",
+    "smoker",
+    "chronic_kidney_disease",
+    "nyha_class",
+    "beta_blocker"
+]
+
+# Remove missing values
+cox_data = cox_data[cox_columns].dropna()
+
+# Create and fit the Cox model
+cox_model = CoxPHFitter()
+
+cox_model.fit(
+    cox_data,
+    duration_col="time_months",
+    event_col="death",
+)
+
+# Display the Cox model results
+print("\nCox Proportional Hazard Results:")
+cox_model.print_summary()
+
+# Create the Cox proportional hazards figure
+plt.figure(figsize=(10,7))
+
+cox_model.plot(hazard_ratios=True)
+
+plt.title("Cox Proportional Hazard: Heart Failure Survival")
+plt.xlabel("Hazard Ratio")
+plt.grid(True)
+plt.tight_layout()
+
+# Save and display the figures
+plt.savefig("cox_proportional_hazard.png", dpi=300)
+plt.show()
+
+print("\nAnalysis completed successfully")
+print("Both figures have been saved")
