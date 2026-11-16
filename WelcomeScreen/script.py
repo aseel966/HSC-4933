@@ -1,117 +1,117 @@
-###########################################
-# Lab 8 - Logistic and Poisson Regression #
-# Aseel Ali - HSC 4933 - 10/25/2026       #
-###########################################
+#####################################################
+# Final Project: Sleep and Mental Health in Florida #
+# ------------------------------------------------- #
+# CDC PLACES 2025 Data                              #
 
 import pandas as pd
-import numpy as np
-import statsmodels.api as sm
-from sklearn.metrics import classification_report, confusion_matrix
-from statsmodels.stats.outliers_influence import variance_inflation_factor
+import matplotlib.pyplot as plt
+from scipy.stats import pearsonr, linregress
+from pathlib import Path
 
-# Ask the user for a dataset and load it
-filename = input("Enter the dataset file name: ")
-df = pd.read_csv(filename)
+# Step 1: Load the dataset
+data_folder = Path(__file__).parent / "data"
+csv_files = list(data_folder.glob("*.csv"))
 
-# Clean column names using IC#4 method
-df.columns = df.columns.str.lower().str.replace(" ", "_")
+if len(csv_files) !=1:
+    raise ValueError(
+        "Please keep exactly one CSV file in the data folder. "
+    )
+df = pd.read_csv(csv_files[0], low_memory=False)
+print("Dataset loaded!")
+print("Total rows", len(df))
 
-# List all available columns
-print("\nAvailable columns:")
-print(df.columns.tolist())
+# Step 2: Select Florida counties
+florida = df[df["StateAbbr"] == "FL"].copy()
+print("Florida rows:", len(florida))
 
-# Ask for multiple predictors and one response variable
-predictors = input("Enter predictors columns separated by commas: ")
-predictors = predictors.replace(" ", "").lower().split(",")
+# Step 3: Keep short sleep and mental distress
+# SLEEP = less than 7 hours of sleep
+# MLTH = frequent mental distress
+florida = florida[
+    florida["MeasureId"].isin(["SLEEP", "MHLTH"])
+].copy()
 
-response = input("Enter the response column: ")
-response = response.strip().lower()
+# step 4: use age-adjusted percentages
+florida = florida[
+    florida["Data_Value_Type"] == "Age-adjusted prevalence"
+].copy()
 
-# Ask the user which regression to perform
-print("\n1. Logistic Regression:")
-print("2. Poisson Regression")
-choice = input("Enter 1 or 2: ")
+# step 5: remove missing values and duplicates
+florida["Data_Value"] = pd.to_numeric(
+    florida["Data_Value"], errors="coerce"
+)
+florida = florida.dropna(
+    subset=["LocationName", "MeasureId", "Data_Value"]
+)
+duplicates = florida.duplicated(
+    subset=["LocationName", "MeasureId"], keep=False
+)
+if duplicates.any():
+    raise ValueError(
+        "Duplicate county/measure rows found. "
+        "Check the dataset before continuing."
+    )
+# Step 6: Put both measurements side by side
+county_data = florida.pivot(
+    index="LocationName",
+    columns="MeasureId",
+    values="Data_Value"
+)
+print("Avaiable columns:", county_data.columns.tolist())
+print("Measure IDs:", florida["MeasureId"].unique())
+county_data = county_data.dropna(
+    subset=["SLEEP", "MHLTH"]
+)
+county_data = county_data.rename(columns={
+    "SLEEP": "Short_Sleep",
+    "MLTH": "Mental_Distress",
+})
+print("\nNumber of counties:", len(county_data))
+print("\nFirst five counties:")
+print(county_data.describe())
 
-# Remove rows missing values when in selected columns
-df = df.dropna(subset=predictors + [response])
+# Step 8: Pearson correlation
+x = county_data["Short_Sleep"]
+y = county_data["MHLTH"]
+if len(county_data) < 3:
+    raise ValueError("Not enough countries for analysis.")
+r, p_value = pearsonr(x,y)
+print("\nPearson Correlation:")
+print("Correlation (r):", round(r,3))
+print("P-value:", round(p_value,4))
 
-# Select predictors and response
-X = df[predictors]
-x = X.apply(pd.to_numeric, errors="coerce")
-y = df[response]
-y = pd.to_numeric(y, errors="coerce")
+# Step 9: Simple linear regression
+slope, intercept, r_value, p_value, std_err = linregress(x, y)
+print("\nLinear Regression:")
+print("Slope:", round(slope,3))
+print("Intercept:", round(intercept,3))
+print("R-squared:", round(r_value **2, 3))
+print("P-value:", round(p_value,4))
 
-valid_rows = X.notna().all(axis=1) & y.notna()
-X = X.loc[valid_rows]
-y = y.loc[valid_rows]
-# Add a constant for regression
-X = sm.add_constant(X)
+# Step 10: Create scatterplot
+plt.figure(figsize=(9,6))
 
-# Logistic regression
-if choice == "1":
+plt.scatter(x, y, color="blue", alpha=0.7)
 
-    # Logistic regression requires values of 0 and 1
-    if not y.isin([0, 1]).all():
-        raise ValueError("Response must contain only 0 and 1.")
+# Regression line
+plt.plot(
+    x,
+    slope * x + intercept,
+    color="red",
+    label="Regression line",
+)
+plt.xlabel("Adult with Short Sleep(%)")
+plt.ylabel("Adults with Frequent Mental Distress(%)")
+plt.title("Short Sleep and Mental Distress in Florida Counties")
 
-    model = sm.Logit(y, X).fit()
+plt.legend()
+plt.grid(True, alpha=0.3)
+plt.tight_layout()
 
-    # Predict values of 0 or 1
-    prediction = model.predict(X)
-    predictions = (prediction > 0.5).astype(int)
+plt.savefig("florida_sleep_scatterplot.png")
+plt.show()
 
-    # Calculate accuracy
-    accuracy = (predictions == y).mean()
+# Step 11: Save cleaned data
+county_data.to_csv("florida_sleep_cleaned.csv")
 
-    # Create regression output
-    output = str(model.summary())
-    output += "\n\nAccuracy: " + str(accuracy)
-    output += "\n\nClassification Report:\n"
-    output += classification_report(y, predictions)
-    output += "\nConfusion Matrix:\n"
-    output += str(confusion_matrix(y, predictions))
-
-# Poisson regression
-elif choice == "2":
-
-    # Poisson regression is intended for count variables
-    if (y < 0).any():
-        raise ValueError("Response must not contain negative values.")
-    if (y % 1 != 0).any():
-        print("Warning: The response contains decimals, not counts")
-
-     # Calculate Poisson regression
-    model = sm.GLM(y, X, family=sm.families.Poisson()).fit()
-
-     # Calculate VIF for each predictor
-    vif = pd.DataFrame()
-    vif["Predictor"] = predictors
-    vif["VIF"] = [
-     variance_inflation_factor(X.values, i + 1)
-     for i in range(len(predictors))
-     ]
-
-     # Calculate pseudo-R squared
-    null_model = sm.GLM(
-        y, X[["const"]], family=sm.families.Poisson()).fit()
-    pseudo_r2 = 1 - model.llf / null_model.llf
-
-    # Create regression output
-    output = str(model.summary())
-    output += "\n\nPseudo-R²: " + str(pseudo_r2)
-    output += "\n\nVIF Results:\n"
-    output += vif.to_string(index=False)
-
-# Print the regression results
-print("\n", output)
-
-# Ask whether to save results
-save = input("\nWould you like to save the result? (yes/no): ")
-
-if save.lower() == "yes":
-    output_name = input("Enter a filename ending in .txt: ")
-
-    with open(output_name, "w") as file:
-        file.write(output)
-
-    print("Output saved as:", output_name)
+print("\nAnalysis complete!")
